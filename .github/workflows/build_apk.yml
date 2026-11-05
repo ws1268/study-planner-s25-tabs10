@@ -31,6 +31,8 @@ jobs:
           cp -r /tmp/custom_backup/pubspec.yaml .
           cp -r /tmp/custom_backup/lib/* lib/
           cp -r /tmp/custom_backup/android/* android/
+          echo "" >> android/gradle.properties
+          echo "kotlin.jvm.target.validation.mode=warning" >> android/gradle.properties
 
       - name: Configure Android Gradle for Desugaring & SDK 34
         run: |
