@@ -1,0 +1,76 @@
+name: Build Galaxy S25 & Tab S10 Ultra APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Generate Flutter Android scaffold while preserving custom code
+        run: |
+          mkdir -p /tmp/custom_backup
+          cp -r pubspec.yaml lib android /tmp/custom_backup/
+          flutter create . --project-name study_planner_app --org com.example --platforms android
+          cp -r /tmp/custom_backup/pubspec.yaml .
+          cp -r /tmp/custom_backup/lib/* lib/
+          cp -r /tmp/custom_backup/android/* android/
+
+      - name: Configure Android Gradle for Desugaring & SDK 34
+        run: |
+          python3 - << 'EOF'
+          import pathlib, re
+
+          gradle_kts = pathlib.Path("android/app/build.gradle.kts")
+          gradle_groovy = pathlib.Path("android/app/build.gradle")
+
+          if gradle_groovy.exists():
+              txt = gradle_groovy.read_text()
+              if "coreLibraryDesugaringEnabled" not in txt:
+                  txt = txt.replace(
+                      "compileOptions {",
+                      "compileOptions {\n        coreLibraryDesugaringEnabled true"
+                  )
+                  txt += "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'\n}\n"
+              txt = re.sub(r"minSdk\s+.*", "minSdk 23", txt)
+              txt = re.sub(r"minSdkVersion\s+.*", "minSdkVersion 23", txt)
+              gradle_groovy.write_text(txt)
+          elif gradle_kts.exists():
+              txt = gradle_kts.read_text()
+              if "isCoreLibraryDesugaringEnabled" not in txt:
+                  txt = txt.replace(
+                      "compileOptions {",
+                      "compileOptions {\n        isCoreLibraryDesugaringEnabled = true"
+                  )
+                  txt += '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")\n}\n'
+              txt = re.sub(r"minSdk\s*=\s*\S+", "minSdk = 23", txt)
+              gradle_kts.write_text(txt)
+          EOF
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: study-planner-s25-tabs10-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
