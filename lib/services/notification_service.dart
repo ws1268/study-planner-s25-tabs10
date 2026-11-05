@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import '../models/study_block.dart';
@@ -25,11 +24,8 @@ class NotificationService {
 
     tz.initializeTimeZones();
     try {
-      final String timeZoneName = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(timeZoneName));
-    } catch (_) {
       tz.setLocalLocation(tz.getLocation('Asia/Seoul'));
-    }
+    } catch (_) {}
 
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -56,7 +52,8 @@ class NotificationService {
   }
 
   /// 오늘의 시간표 블록들에 대해 시작 정각 알림 & 종료 N분 전 알림을 예약합니다.
-  Future<void> rescheduleTodayNotifications(List<StudyBlock> todayBlocks) async {
+  Future<void> rescheduleTodayNotifications(
+      List<StudyBlock> todayBlocks) async {
     if (kIsWeb || !_initialized) return;
 
     await _plugin.cancelAll();
