@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:orientation="vertical"
+    android:padding="14dp">
+
+    <!-- 상단: 과목 뱃지 & 남은 시간 상태 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/widget_subject_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="#4F46E5"
+            android:paddingLeft="8dp"
+            android:paddingTop="3dp"
+            android:paddingRight="8dp"
+            android:paddingBottom="3dp"
+            android:text="수학"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_status_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:text="🔥 지금 공부 중"
+            android:textColor="#FBBF24"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- 중앙: 지금 해야 할 공부 제목 -->
+    <TextView
+        android:id="@+id/widget_title_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="미적분 기출문제 풀이 &amp; 오답노트 정리"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <!-- 시간대 범위 -->
+    <TextView
+        android:id="@+id/widget_time_range_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="14:15 ~ 15:40"
+        android:textColor="#CBD5E1"
+        android:textSize="11sp" />
+
+    <!-- 진행률 프로그레스 바 -->
+    <ProgressBar
+        android:id="@+id/widget_progress_bar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="7dp"
+        android:layout_marginTop="6dp"
+        android:max="100"
+        android:progress="45"
+        android:progressTint="#FBBF24" />
+
+    <!-- 세부 할 일 체크리스트 요약 -->
+    <TextView
+        android:id="@+id/widget_checklist_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:text="☐ 3단원 기출 15문제 시간 재고 풀기"
+        android:textColor="#E2E8F0"
+        android:textSize="11sp" />
+
+    <!-- 📋 오늘 해야 할 공부 전체 목록 섹션 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="📋 오늘 해야 할 공부 목록"
+        android:textColor="#93C5FD"
+        android:textSize="11sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/widget_today_list_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:ellipsize="end"
+        android:maxLines="4"
+        android:text="✅ 09:10~10:35 [국어] 비문학 독해\n🔥 14:15~15:40 [수학] 미적분 기출\n⏳ 16:00~17:10 [영어] 빈출 어휘 암기"
+        android:textColor="#F1F5F9"
+        android:textSize="11sp" />
+
+    <!-- 하단: 주간 목표 미달 과목 경고 또는 다음 안내 -->
+    <TextView
+        android:id="@+id/widget_next_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="🚨 주간 목표 미달: 수학(2시간 부족)"
+        android:textColor="#FCA5A5"
+        android:textSize="11sp"
+        android:textStyle="bold" />
+
+</LinearLayout>
