@@ -6,6 +6,7 @@ class SubjectStatItem {
   final String subject;
   final int colorValue;
   final int totalMinutes;
+  final int extraPomodoroMinutes;
   final int sessionCount;
   final int targetMinutes;
 
@@ -13,21 +14,24 @@ class SubjectStatItem {
     required this.subject,
     required this.colorValue,
     required this.totalMinutes,
+    this.extraPomodoroMinutes = 0,
     required this.sessionCount,
     required this.targetMinutes,
   });
 
   Color get color => Color(colorValue);
 
-  int get deficitMinutes => (targetMinutes - totalMinutes).clamp(0, 100000);
+  int get combinedMinutes => totalMinutes + extraPomodoroMinutes;
 
-  bool get isGoalMet => targetMinutes <= 0 || totalMinutes >= targetMinutes;
+  int get deficitMinutes => (targetMinutes - combinedMinutes).clamp(0, 100000);
+
+  bool get isGoalMet => targetMinutes <= 0 || combinedMinutes >= targetMinutes;
 
   double get goalProgress => targetMinutes > 0
-      ? (totalMinutes / targetMinutes).clamp(0.0, 1.0)
+      ? (combinedMinutes / targetMinutes).clamp(0.0, 1.0)
       : 1.0;
 
-  String get formattedTime => formatMins(totalMinutes);
+  String get formattedTime => formatMins(combinedMinutes);
   String get formattedTarget => formatMins(targetMinutes);
   String get formattedDeficit => formatMins(deficitMinutes);
 
@@ -43,6 +47,7 @@ class SubjectStatItem {
 class WeeklySubjectStatsView extends StatelessWidget {
   final List<StudyBlock> Function(int weekday) getBlocksForWeekday;
   final List<SubjectWeeklyGoal> weeklyGoals;
+  final Map<String, int> extraPomodoroMinutes;
   final int currentWeekday;
   final void Function(String subject, int newTargetMinutes, int colorValue)
       onUpdateSubjectGoal;
@@ -55,6 +60,7 @@ class WeeklySubjectStatsView extends StatelessWidget {
     super.key,
     required this.getBlocksForWeekday,
     required this.weeklyGoals,
+    this.extraPomodoroMinutes = const {},
     required this.currentWeekday,
     required this.onUpdateSubjectGoal,
     required this.onAssignDeficitBlockToday,
@@ -71,10 +77,13 @@ class WeeklySubjectStatsView extends StatelessWidget {
 
     // 1) 먼저 목표가 설정된 과목들을 기본 등록
     for (final g in weeklyGoals) {
+      final extra = extraPomodoroMinutes[g.subject] ?? 0;
+      grandTotalMinutes += extra;
       subjectMap[g.subject] = SubjectStatItem(
         subject: g.subject,
         colorValue: g.colorValue,
         totalMinutes: 0,
+        extraPomodoroMinutes: extra,
         sessionCount: 0,
         targetMinutes: g.targetMinutes,
       );
@@ -90,24 +99,43 @@ class WeeklySubjectStatsView extends StatelessWidget {
 
         final prev = subjectMap[b.subject];
         if (prev == null) {
+          final extra = extraPomodoroMinutes[b.subject] ?? 0;
+          grandTotalMinutes += extra;
           subjectMap[b.subject] = SubjectStatItem(
             subject: b.subject,
             colorValue: b.colorValue,
             totalMinutes: dur,
+            extraPomodoroMinutes: extra,
             sessionCount: 1,
-            targetMinutes: 300, // 기본 주 5시간 목표
+            targetMinutes: 300,
           );
         } else {
           subjectMap[b.subject] = SubjectStatItem(
             subject: b.subject,
             colorValue: prev.colorValue,
             totalMinutes: prev.totalMinutes + dur,
+            extraPomodoroMinutes: prev.extraPomodoroMinutes,
             sessionCount: prev.sessionCount + 1,
             targetMinutes: prev.targetMinutes,
           );
         }
       }
     }
+
+    // 3) 시간표에는 없지만 자유 뽀모도로로 공부한 과목도 반영
+    extraPomodoroMinutes.forEach((subj, mins) {
+      if (!subjectMap.containsKey(subj) && mins > 0) {
+        grandTotalMinutes += mins;
+        subjectMap[subj] = SubjectStatItem(
+          subject: subj,
+          colorValue: 0xFF7C3AED,
+          totalMinutes: 0,
+          extraPomodoroMinutes: mins,
+          sessionCount: 1,
+          targetMinutes: 300,
+        );
+      }
+    });
 
     final sortedSubjects = subjectMap.values.toList()
       ..sort((a, b) => b.deficitMinutes.compareTo(a.deficitMinutes));
@@ -193,7 +221,7 @@ class WeeklySubjectStatsView extends StatelessWidget {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '목표 ${item.formattedTarget} 중 ${item.formattedTime} 계획됨',
+                                '목표 ${item.formattedTarget} 중 ${item.formattedTime} 확보됨',
                                 style: const TextStyle(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w700,
@@ -276,10 +304,10 @@ class WeeklySubjectStatsView extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                '📊 이번 주 총 계획 공부시간 (월~일)',
+                '📊 이번 주 총 공부시간 (시간표 + 뽀모도로 달성 합산 • S25↔탭S10 동기화)',
                 style: TextStyle(
                   color: Colors.white70,
-                  fontSize: 13,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -315,10 +343,10 @@ class WeeklySubjectStatsView extends StatelessWidget {
                     height: 14,
                     child: Row(
                       children: sortedSubjects
-                          .where((s) => s.totalMinutes > 0)
+                          .where((s) => s.combinedMinutes > 0)
                           .map((item) {
                         final flex =
-                            ((item.totalMinutes / grandTotalMinutes) * 1000)
+                            ((item.combinedMinutes / grandTotalMinutes) * 1000)
                                 .round()
                                 .clamp(1, 1000);
                         return Expanded(
@@ -402,8 +430,7 @@ class WeeklySubjectStatsView extends StatelessWidget {
                     ),
                     const Spacer(),
                     TextButton.icon(
-                      onPressed: () =>
-                          _showGoalEditDialog(context, item),
+                      onPressed: () => _showGoalEditDialog(context, item),
                       icon: const Icon(Icons.flag_outlined, size: 15),
                       label: Text(
                         '목표: ${item.formattedTarget}',
@@ -420,7 +447,9 @@ class WeeklySubjectStatsView extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      '현재 주간 계획: ${item.formattedTime} (주 ${item.sessionCount}회)',
+                      item.extraPomodoroMinutes > 0
+                          ? '시간표 ${SubjectStatItem.formatMins(item.totalMinutes)} + 뽀모도로 ${item.extraPomodoroMinutes}분'
+                          : '현재 주간 계획: ${item.formattedTime} (주 ${item.sessionCount}회)',
                       style: TextStyle(
                         fontSize: 12.5,
                         color: Colors.grey.shade700,
@@ -542,7 +571,7 @@ class WeeklySubjectStatsView extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    '1주일 동안 이 과목을 최소 몇 시간 공부할지 목표를 정하세요. 미달 시 앱이 자동으로 보충 학습을 안내합니다.',
+                    '1주일 동안 이 과목을 최소 몇 시간 공부할지 목표를 정하세요. 미달 시 앱이 자동으로 보충 학습을 안내하며 S25와 탭 S10 Ultra에 동시 반영됩니다.',
                     style: TextStyle(fontSize: 12.5, color: Colors.black54),
                   ),
                   const SizedBox(height: 16),
