@@ -7,117 +7,139 @@
     android:orientation="vertical"
     android:padding="14dp">
 
-    <!-- 상단: 과목 뱃지 & 남은 시간 상태 -->
+    <!-- 1. 메인 현재 공부 박스 (선명한 내부 카드 분리로 가독성 극대화) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:background="@drawable/widget_card_inner"
+        android:orientation="vertical"
+        android:padding="12dp">
 
-        <TextView
-            android:id="@+id/widget_subject_badge"
-            android:layout_width="wrap_content"
+        <!-- 상단: 큼직한 과목 캡슐 뱃지 & 고대비 남은 시간 표시 -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#4F46E5"
-            android:paddingLeft="8dp"
-            android:paddingTop="3dp"
-            android:paddingRight="8dp"
-            android:paddingBottom="3dp"
-            android:text="수학"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/widget_subject_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/widget_badge_bg"
+                android:paddingLeft="10dp"
+                android:paddingTop="4dp"
+                android:paddingRight="10dp"
+                android:paddingBottom="4dp"
+                android:text="수학"
+                android:textColor="#FFFFFF"
+                android:textSize="13.5sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/widget_status_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:text="🔥 지금 공부 중 (45분 남음)"
+                android:textColor="#FDE047"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- 중앙: 지금 해야 할 공부 제목 (17.5sp 굵은 흰색 글씨로 멀리서도 또렷하게) -->
+        <TextView
+            android:id="@+id/widget_title_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:text="미적분 기출문제 풀이 &amp; 오답노트 정리"
             android:textColor="#FFFFFF"
-            android:textSize="12sp"
+            android:textSize="17.5sp"
             android:textStyle="bold" />
 
+        <!-- 시간대 범위 (하늘색 포인트 컬러로 제목과 명확히 구분) -->
         <TextView
-            android:id="@+id/widget_status_text"
-            android:layout_width="0dp"
+            android:id="@+id/widget_time_range_text"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="end"
-            android:text="🔥 지금 공부 중"
-            android:textColor="#FBBF24"
-            android:textSize="12sp"
+            android:layout_marginTop="4dp"
+            android:text="⏰ 14:15 ~ 15:40 (1시간 25분)"
+            android:textColor="#93C5FD"
+            android:textSize="13sp"
             android:textStyle="bold" />
+
+        <!-- 두꺼운 진행률 프로그레스 바 -->
+        <ProgressBar
+            android:id="@+id/widget_progress_bar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="9dp"
+            android:layout_marginTop="8dp"
+            android:max="100"
+            android:progress="45"
+            android:progressBackgroundTint="#334155"
+            android:progressTint="#FDE047" />
+
+        <!-- 세부 할 일 체크리스트 요약 (12.5sp + 줄간격 확대) -->
+        <TextView
+            android:id="@+id/widget_checklist_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:ellipsize="end"
+            android:lineSpacingExtra="4dp"
+            android:maxLines="2"
+            android:text="☑ 3단원 기출 15문제 시간 재고 풀기\n☐ 헷갈린 문항 해설지 비교 및 오답 체크"
+            android:textColor="#F8FAFC"
+            android:textSize="12.5sp" />
     </LinearLayout>
 
-    <!-- 중앙: 지금 해야 할 공부 제목 -->
-    <TextView
-        android:id="@+id/widget_title_text"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:text="미적분 기출문제 풀이 &amp; 오답노트 정리"
-        android:textColor="#FFFFFF"
-        android:textSize="15sp"
-        android:textStyle="bold" />
-
-    <!-- 시간대 범위 -->
-    <TextView
-        android:id="@+id/widget_time_range_text"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:text="14:15 ~ 15:40"
-        android:textColor="#CBD5E1"
-        android:textSize="11sp" />
-
-    <!-- 진행률 프로그레스 바 -->
-    <ProgressBar
-        android:id="@+id/widget_progress_bar"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="7dp"
-        android:layout_marginTop="6dp"
-        android:max="100"
-        android:progress="45"
-        android:progressTint="#FBBF24" />
-
-    <!-- 세부 할 일 체크리스트 요약 -->
-    <TextView
-        android:id="@+id/widget_checklist_text"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:ellipsize="end"
-        android:maxLines="2"
-        android:text="☐ 3단원 기출 15문제 시간 재고 풀기"
-        android:textColor="#E2E8F0"
-        android:textSize="11sp" />
-
-    <!-- 📋 오늘 해야 할 공부 전체 목록 섹션 -->
-    <TextView
+    <!-- 2. 하단: 오늘 해야 할 공부 전체 스케줄 박스 (가독성 높은 큰 글씨 + 줄간격) -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="📋 오늘 해야 할 공부 목록"
-        android:textColor="#93C5FD"
-        android:textSize="11sp"
-        android:textStyle="bold" />
+        android:background="@drawable/widget_card_inner"
+        android:orientation="vertical"
+        android:padding="11dp">
 
-    <TextView
-        android:id="@+id/widget_today_list_text"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="3dp"
-        android:ellipsize="end"
-        android:maxLines="4"
-        android:text="✅ 09:10~10:35 [국어] 비문학 독해\n🔥 14:15~15:40 [수학] 미적분 기출\n⏳ 16:00~17:10 [영어] 빈출 어휘 암기"
-        android:textColor="#F1F5F9"
-        android:textSize="11sp" />
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📋 오늘 해야 할 공부 스케줄"
+            android:textColor="#38BDF8"
+            android:textSize="12.5sp"
+            android:textStyle="bold" />
 
-    <!-- 하단: 주간 목표 미달 과목 경고 또는 다음 안내 -->
-    <TextView
-        android:id="@+id/widget_next_text"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:text="🚨 주간 목표 미달: 수학(2시간 부족)"
-        android:textColor="#FCA5A5"
-        android:textSize="11sp"
-        android:textStyle="bold" />
+        <TextView
+            android:id="@+id/widget_today_list_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:ellipsize="end"
+            android:lineSpacingExtra="5dp"
+            android:maxLines="5"
+            android:text="✅ 09:10~10:35  [국어] 비문학 독해 3지문\n🔥 14:15~15:40  [수학] 미적분 기출 15문제\n⏳ 16:00~17:10  [영어] 빈출 어휘 암기"
+            android:textColor="#FFFFFF"
+            android:textSize="12.5sp"
+            android:textStyle="bold" />
+
+        <!-- 주간 목표 미달 과목 경고 또는 달성 상태 -->
+        <TextView
+            android:id="@+id/widget_next_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="🚨 주간 목표 미달: 수학(2시간 부족)"
+            android:textColor="#FCA5A5"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </LinearLayout>
 
 </LinearLayout>
