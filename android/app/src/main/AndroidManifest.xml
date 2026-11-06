@@ -1,6 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.study_planner_app">
 
+    <!-- 기기 간 무선 동기화 및 앱 내부 원클릭 업데이트 다운로드 권한 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- 정확한 공부 시작/종료 전 알림 및 진동 권한 (Galaxy S25 / Tab S10 Ultra Android 14/15 대응) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -21,6 +28,7 @@
         android:label="나만의 공부 시간표"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true"
         android:resizeableActivity="true">
 
         <!-- Samsung Multi-Window / DeX / 분할 화면 및 세로·가로 회전 완벽 지원 -->
@@ -48,6 +56,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 앱 내부 원클릭 덮어쓰기 업데이트용 내장 ContentProvider -->
+        <provider
+            android:name=".ApkUpdateFileProvider"
+            android:authorities="com.example.study_planner_app.apkprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <!-- 로컬 알림 스케줄러 리시버 (flutter_local_notifications) -->
         <receiver
