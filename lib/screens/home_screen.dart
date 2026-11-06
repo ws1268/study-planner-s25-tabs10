@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
@@ -30,8 +31,12 @@ class _HomeScreenState extends State<HomeScreen>
   List<StudyBlock> _allBlocks = [];
   List<SubjectWeeklyGoal> _weeklyGoals = [];
   Set<String> _customOverrideDates = {};
+  Map<String, int> _extraPomodoroMinutes = {};
+  int _completedPomodoroCount = 0;
+
   String _emergencyMasterKey = '1129';
   String _pairingCode = 'S25-TAB10';
+  int _lastAppliedSyncTimestamp = 0;
 
   DateTime _now = DateTime.now();
   Timer? _ticker;
@@ -46,7 +51,7 @@ class _HomeScreenState extends State<HomeScreen>
   int _lockTotalSeconds = 0;
 
   late TabController _tabController;
-  int _selectedWeekday = DateTime.now().weekday; // 1(월) ~ 7(일)
+  int _selectedWeekday = DateTime.now().weekday;
   DateTime _selectedDate = DateTime.now();
 
   String? _lastAlertKey;
@@ -87,28 +92,75 @@ class _HomeScreenState extends State<HomeScreen>
     final blocks = await _storage.loadAllBlocks();
     final goals = await _storage.loadSubjectWeeklyGoals();
     final customDates = await _storage.loadCustomOverrideDates();
+    final extraPomo = await _storage.loadExtraPomodoroMinutes();
+    final pomoCount = await _storage.loadCompletedPomodoroCount();
     final masterKey = await _storage.loadEmergencyMasterKey();
     final pairingCode = await _storage.loadDevicePairingCode();
+    final lastTs = await _storage.getLastSyncTimestamp();
 
     if (!mounted) return;
     setState(() {
       _allBlocks = blocks;
       _weeklyGoals = goals;
       _customOverrideDates = customDates;
+      _extraPomodoroMinutes = extraPomo;
+      _completedPomodoroCount = pomoCount;
       _emergencyMasterKey = masterKey;
       _pairingCode = pairingCode;
+      _lastAppliedSyncTimestamp = lastTs;
     });
 
     await FocusLockService.instance.initialize(
       pairingCode: _pairingCode,
-      onRemoteLockEvent: _handleRemoteDeviceLockSignal,
+      onRemoteEvent: _handleRemoteDeviceEvent,
+      getLocalSnapshotCallback: _buildCurrentSyncSnapshotMap,
     );
     await _syncNotificationsAndWidget();
   }
 
-  /// 갤럭시 S25 <-> 갤럭시 탭 S10 Ultra 간 원격 잠금/해제 신호 수신 처리
-  void _handleRemoteDeviceLockSignal(FocusLockPayload payload) {
+  Map<String, dynamic> _buildCurrentSyncSnapshotMap() {
+    return {
+      'updatedAt': _lastAppliedSyncTimestamp > 0
+          ? _lastAppliedSyncTimestamp
+          : DateTime.now().millisecondsSinceEpoch,
+      'blocks': _allBlocks.map((b) => b.toJson()).toList(),
+      'weeklyGoals': _weeklyGoals.map((g) => g.toJson()).toList(),
+      'customOverrideDates': _customOverrideDates.toList(),
+      'extraPomodoroMinutes': _extraPomodoroMinutes,
+      'completedPomodoroCount': _completedPomodoroCount,
+    };
+  }
+
+  /// 로컬에서 변경 사항이 발생할 때마다 저장 + 연결된 S25 / 탭 S10 Ultra로 전체 동기화 브로드캐스트
+  Future<void> _persistAndBroadcastAllChanges() async {
+    await _storage.saveAllBlocks(_allBlocks);
+    await _storage.saveSubjectWeeklyGoals(_weeklyGoals);
+    await _storage.saveCustomOverrideDates(_customOverrideDates);
+    await _storage.saveExtraPomodoroMinutes(_extraPomodoroMinutes);
+    await _storage.saveCompletedPomodoroCount(_completedPomodoroCount);
+
+    final snap = await _storage.exportFullSyncSnapshot(
+      blocks: _allBlocks,
+      weeklyGoals: _weeklyGoals,
+      customOverrideDates: _customOverrideDates,
+      extraPomodoroMinutes: _extraPomodoroMinutes,
+      completedPomodoroCount: _completedPomodoroCount,
+    );
+    _lastAppliedSyncTimestamp = snap['updatedAt'] as int;
+
+    FocusLockService.instance.broadcastFullDataSync(snap);
+    await _syncNotificationsAndWidget();
+  }
+
+  /// 갤럭시 S25 <-> 갤럭시 탭 S10 Ultra 간 원격 데이터 동기화 및 잠금/해제 신호 수신 처리
+  Future<void> _handleRemoteDeviceEvent(FocusLockPayload payload) async {
     if (!mounted) return;
+
+    if (payload.type == 'FULL_DATA_SYNC' && payload.syncData != null) {
+      await _applyIncomingSyncSnapshot(payload.syncData!);
+      return;
+    }
+
     if (payload.type == 'LOCK_START' && !_isUltraFocusLocked) {
       setState(() {
         _isUltraFocusLocked = true;
@@ -134,7 +186,53 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// 🔒 최대 집중 모드 시작 (현재 기기 앱 차단 + 연동된 S25/탭S10 동시 잠금 신호 전송)
+  Future<void> _applyIncomingSyncSnapshot(Map<String, dynamic> data) async {
+    try {
+      final incomingTs = (data['updatedAt'] as num?)?.toInt() ?? 0;
+      if (incomingTs > 0 && incomingTs < _lastAppliedSyncTimestamp) {
+        return; // 이미 더 최신 상태를 보유 중이면 무시
+      }
+
+      final newBlocks = (data['blocks'] as List<dynamic>? ?? [])
+          .map((e) => StudyBlock.fromJson(e as Map<String, dynamic>))
+          .toList();
+      final newGoals = (data['weeklyGoals'] as List<dynamic>? ?? [])
+          .map((e) => SubjectWeeklyGoal.fromJson(e as Map<String, dynamic>))
+          .toList();
+      final newDates = (data['customOverrideDates'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toSet();
+      final rawExtra =
+          data['extraPomodoroMinutes'] as Map<String, dynamic>? ?? {};
+      final newExtra =
+          rawExtra.map((k, v) => MapEntry(k, (v as num).toInt()));
+      final newPomoCount =
+          (data['completedPomodoroCount'] as num?)?.toInt() ??
+              _completedPomodoroCount;
+
+      if (!mounted) return;
+      setState(() {
+        _allBlocks = newBlocks;
+        if (newGoals.isNotEmpty) _weeklyGoals = newGoals;
+        _customOverrideDates = newDates;
+        _extraPomodoroMinutes = newExtra;
+        _completedPomodoroCount = newPomoCount;
+        _lastAppliedSyncTimestamp =
+            incomingTs > 0 ? incomingTs : DateTime.now().millisecondsSinceEpoch;
+      });
+
+      await _storage.saveAllBlocks(_allBlocks);
+      await _storage.saveSubjectWeeklyGoals(_weeklyGoals);
+      await _storage.saveCustomOverrideDates(_customOverrideDates);
+      await _storage.saveExtraPomodoroMinutes(_extraPomodoroMinutes);
+      await _storage.saveCompletedPomodoroCount(_completedPomodoroCount);
+      await _syncNotificationsAndWidget();
+    } catch (e) {
+      debugPrint('원격 동기화 데이터 적용 오류: $e');
+    }
+  }
+
+  /// 🔒 최대 집중 모드 시작
   Future<void> _startUltraFocusLock({
     required String subject,
     required String title,
@@ -163,17 +261,24 @@ class _HomeScreenState extends State<HomeScreen>
           title: title,
           remainingSeconds: durationSeconds,
           totalSeconds: durationSeconds,
-          sourceDevice: 'Galaxy',
+          sourceDevice: FocusLockService.instance.deviceId,
         ),
       );
     }
   }
 
   Future<void> _completeUltraFocusLock() async {
+    final completedMins = (_lockTotalSeconds / 60).round().clamp(1, 240);
+    final subj = _lockedSubject;
+
     setState(() {
       _isUltraFocusLocked = false;
+      _completedPomodoroCount++;
+      _extraPomodoroMinutes[subj] =
+          (_extraPomodoroMinutes[subj] ?? 0) + completedMins;
     });
     await FocusLockService.instance.disableNativeAppLock();
+
     if (_ultraSyncBothDevices) {
       FocusLockService.instance.broadcastLockSignal(
         FocusLockPayload(
@@ -183,13 +288,15 @@ class _HomeScreenState extends State<HomeScreen>
           title: _lockedTitle,
           remainingSeconds: 0,
           totalSeconds: _lockTotalSeconds,
-          sourceDevice: 'Galaxy',
+          sourceDevice: FocusLockService.instance.deviceId,
         ),
       );
     }
+    await _persistAndBroadcastAllChanges();
+
     _showInAppAlertToast(
-      title: '🎉 [$_lockedSubject] 최대 집중 모드 목표 달성!',
-      message: '갤럭시 S25와 탭 S10 Ultra의 다른 앱 사용 차단이 해제되었습니다.',
+      title: '🎉 [$_lockedSubject] 최대 집중 모드 목표 달성! (+$completedMins분)',
+      message: '주간 통계에 반영되었으며 S25와 탭 S10 Ultra의 잠금이 해제되었습니다.',
       color: const Color(0xFF059669),
     );
   }
@@ -208,7 +315,7 @@ class _HomeScreenState extends State<HomeScreen>
           title: _lockedTitle,
           remainingSeconds: 0,
           totalSeconds: _lockTotalSeconds,
-          sourceDevice: 'Galaxy',
+          sourceDevice: FocusLockService.instance.deviceId,
         ),
       );
     }
@@ -219,9 +326,9 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  /// 주간 목표 미달 과목 요약 문자열 리스트 반환
+  /// 주간 목표 미달 과목 요약 문자열 리스트 반환 (시간표 + 뽀모도로 자유 공부시간 합산)
   List<String> _getUnderTargetWarnings() {
-    final Map<String, int> weeklyActual = {};
+    final Map<String, int> weeklyActual = {..._extraPomodoroMinutes};
     for (int d = 1; d <= 7; d++) {
       for (final b in _getWeeklyBlocksForWeekday(d)) {
         weeklyActual[b.subject] =
@@ -242,7 +349,6 @@ class _HomeScreenState extends State<HomeScreen>
     return warnings;
   }
 
-  /// 과목당 1주일 목표 시간 변경
   Future<void> _updateSubjectWeeklyGoal(
       String subject, int newTargetMinutes, int colorValue) async {
     setState(() {
@@ -260,18 +366,15 @@ class _HomeScreenState extends State<HomeScreen>
         );
       }
     });
-    await _storage.saveSubjectWeeklyGoals(_weeklyGoals);
-    await _syncNotificationsAndWidget();
+    await _persistAndBroadcastAllChanges();
   }
 
-  /// 목표 미달 과목을 오늘 빈 시간에 자동 강제 보충 배정
   Future<void> _assignDeficitBlockToday(
       String subject, int deficitMinutes, int colorValue) async {
     final todayBlocks = _getEffectiveBlocksForDate(_now);
     final nowMins = _now.hour * 60 + _now.minute;
     int startMins = (nowMins + 5).clamp(0, 22 * 60 + 30);
 
-    // 오늘 남은 일정과 겹치지 않는 가장 빠른 빈 시간대 탐색
     for (final b in todayBlocks) {
       if (b.endMinutes > startMins && b.startMinutes <= startMins + 30) {
         startMins = (b.endMinutes + 10).clamp(0, 22 * 60 + 50);
@@ -303,12 +406,11 @@ class _HomeScreenState extends State<HomeScreen>
       _allBlocks.add(newBlock);
       _tabController.animateTo(0);
     });
-    await _storage.saveAllBlocks(_allBlocks);
-    await _syncNotificationsAndWidget();
+    await _persistAndBroadcastAllChanges();
 
     _showInAppAlertToast(
       title: '⚡ [$subject] 오늘 보충 공부 시간 강제 배정 완료!',
-      message: '${newBlock.formattedTimeRange} (${dur}분)에 보충 학습 블록이 추가되었습니다.',
+      message: '${newBlock.formattedTimeRange} (${dur}분)에 추가되었으며 연동 기기에도 동기화되었습니다.',
       color: Color(colorValue),
     );
   }
@@ -467,7 +569,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  /// 비상 해제 마스터 키 & S25 <-> 탭 S10 Ultra 연동 코드 설정 모달
+  /// 기기 전체 동기화(시간표/오늘계획/주간목표/통계) & 비상 해제 마스터 키 설정 모달
   void _openSecurityAndSyncDialog() {
     final keyCtrl = TextEditingController(text: _emergencyMasterKey);
     final codeCtrl = TextEditingController(text: _pairingCode);
@@ -476,43 +578,136 @@ class _HomeScreenState extends State<HomeScreen>
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text('🔐 기기 동시 잠금 & 비상 마스터 키 설정'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '1. 갤럭시 S25 ↔ 갤럭시 탭 S10 Ultra 연동 코드\n'
-                '두 기기에 동일한 연동 코드를 입력해 두면, 한 기기에서 [최대 집중 모드]를 시작할 때 두 기기 모두 다른 앱 사용이 차단됩니다.',
-                style: TextStyle(fontSize: 12, color: Colors.black87),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: codeCtrl,
-                decoration: const InputDecoration(
-                  labelText: '기기 연동 코드',
-                  hintText: '예: S25-TAB10',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+          title: const Text(
+            '🔄 S25 ↔ 탭 S10 전체 연동 & 비상 키 설정',
+            style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w900),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '1. 갤럭시 S25 ↔ 갤럭시 탭 S10 Ultra 전체 동기화 코드\n'
+                  '두 기기에 동일한 연동 코드를 넣어두면 [오늘의 계획, 요일 시간표, 주간 목표, 공부 통계, 최대 집중 잠금]이 모두 실시간 동기화됩니다.',
+                  style: TextStyle(fontSize: 12, color: Colors.black87),
                 ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '2. 예측하지 못한 긴급 상황용 비상 마스터 키\n'
-                '최대 집중 모드 작동 중 불가피하게 잠금을 풀어야 할 때 사용하는 비밀 키입니다.',
-                style: TextStyle(fontSize: 12, color: Colors.black87),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: keyCtrl,
-                decoration: const InputDecoration(
-                  labelText: '비상 해제 마스터 키',
-                  hintText: '예: 1129',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+                const SizedBox(height: 8),
+                TextField(
+                  controller: codeCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '기기 연동 코드',
+                    hintText: '예: S25-TAB10',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          final snap = _buildCurrentSyncSnapshotMap();
+                          FocusLockService.instance.broadcastFullDataSync(snap);
+                          FocusLockService.instance.requestFullSyncFromPeer();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                  '🔄 같은 네트워크의 S25 ↔ 탭 S10 Ultra 간 전체 데이터를 즉시 동기화했습니다!'),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.sync, size: 16),
+                        label: const Text(
+                          '지금 즉시 무선 동기화',
+                          style: TextStyle(
+                              fontSize: 11.5, fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: () async {
+                          final snap = _buildCurrentSyncSnapshotMap();
+                          final encoded =
+                              base64Encode(utf8.encode(jsonEncode(snap)));
+                          await Clipboard.setData(ClipboardData(text: encoded));
+                          if (ctx.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                    '📋 전체 데이터 코드가 복사되었습니다! 다른 기기(삼성 클립보드 공유)에서 [붙여넣기 복원]을 누르세요.'),
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.copy, size: 15),
+                        label: const Text('데이터 복사(클립보드)',
+                            style: TextStyle(fontSize: 11.5)),
+                      ),
+                    ),
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: () async {
+                          final clip =
+                              await Clipboard.getData(Clipboard.kTextPlain);
+                          final raw = clip?.text?.trim() ?? '';
+                          if (raw.isEmpty) return;
+                          try {
+                            final jsonStr = utf8.decode(base64Decode(raw));
+                            final map =
+                                jsonDecode(jsonStr) as Map<String, dynamic>;
+                            await _applyIncomingSyncSnapshot(map);
+                            if (ctx.mounted) {
+                              Navigator.of(ctx).pop();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      '✅ 다른 기기의 시간표·목표·통계 데이터를 성공적으로 불러왔습니다!'),
+                                ),
+                              );
+                            }
+                          } catch (_) {
+                            if (ctx.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('유효한 동기화 코드가 아닙니다.'),
+                                ),
+                              );
+                            }
+                          }
+                        },
+                        icon: const Icon(Icons.paste, size: 15),
+                        label: const Text('데이터 붙여넣기 복원',
+                            style: TextStyle(fontSize: 11.5)),
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(height: 20),
+                const Text(
+                  '2. 예측하지 못한 긴급 상황용 비상 마스터 키\n'
+                  '최대 집중 모드 작동 중 불가피하게 잠금을 풀어야 할 때 사용하는 비밀 키입니다.',
+                  style: TextStyle(fontSize: 12, color: Colors.black87),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: keyCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '비상 해제 마스터 키',
+                    hintText: '예: 1129',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -534,9 +729,10 @@ class _HomeScreenState extends State<HomeScreen>
                 FocusLockService.instance.updatePairingCode(newCode);
                 await _storage.saveEmergencyMasterKey(newKey);
                 await _storage.saveDevicePairingCode(newCode);
+                await _persistAndBroadcastAllChanges();
                 if (ctx.mounted) Navigator.of(ctx).pop();
               },
-              child: const Text('저장'),
+              child: const Text('저장 및 동기화'),
             ),
           ],
         );
@@ -576,8 +772,7 @@ class _HomeScreenState extends State<HomeScreen>
           _allBlocks.add(result);
         }
       });
-      await _storage.saveAllBlocks(_allBlocks);
-      await _syncNotificationsAndWidget();
+      await _persistAndBroadcastAllChanges();
     }
   }
 
@@ -585,8 +780,7 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() {
       _allBlocks.removeWhere((b) => b.id == block.id);
     });
-    await _storage.saveAllBlocks(_allBlocks);
-    await _syncNotificationsAndWidget();
+    await _persistAndBroadcastAllChanges();
   }
 
   Future<void> _toggleChecklistItem(
@@ -605,8 +799,7 @@ class _HomeScreenState extends State<HomeScreen>
         _allBlocks[idx] = updatedBlock;
       }
     });
-    await _storage.saveAllBlocks(_allBlocks);
-    await _syncNotificationsAndWidget();
+    await _persistAndBroadcastAllChanges();
   }
 
   Future<void> _copyWeeklyToDailyCustomPlan(DateTime date) async {
@@ -627,15 +820,13 @@ class _HomeScreenState extends State<HomeScreen>
       _customOverrideDates.add(dateStr);
     });
 
-    await _storage.saveAllBlocks(_allBlocks);
-    await _storage.saveCustomOverrideDates(_customOverrideDates);
-    await _syncNotificationsAndWidget();
+    await _persistAndBroadcastAllChanges();
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
-          '오늘만의 일일 계획 모드로 전환되었습니다! 기존 요일 시간표에 영향 없이 오늘 일정을 마음대로 수정하세요.',
+          '오늘만의 일일 계획 모드로 전환되었습니다! S25와 탭 S10 Ultra에 동시 반영됩니다.',
         ),
       ),
     );
@@ -647,9 +838,17 @@ class _HomeScreenState extends State<HomeScreen>
       _allBlocks.removeWhere((b) => b.specificDate == dateStr);
       _customOverrideDates.remove(dateStr);
     });
-    await _storage.saveAllBlocks(_allBlocks);
-    await _storage.saveCustomOverrideDates(_customOverrideDates);
-    await _syncNotificationsAndWidget();
+    await _persistAndBroadcastAllChanges();
+  }
+
+  Future<void> _handlePomodoroSessionCompleted(
+      String subject, int completedFocusMinutes) async {
+    setState(() {
+      _completedPomodoroCount++;
+      _extraPomodoroMinutes[subject] =
+          (_extraPomodoroMinutes[subject] ?? 0) + completedFocusMinutes;
+    });
+    await _persistAndBroadcastAllChanges();
   }
 
   @override
@@ -679,26 +878,45 @@ class _HomeScreenState extends State<HomeScreen>
                       const Icon(Icons.schedule, color: Colors.white, size: 20),
                 ),
                 const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '나만의 공부 시간표',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w900, fontSize: 17),
-                    ),
-                    Text(
-                      '${_now.month}월 ${_now.day}일 (${_weekdayNames[_now.weekday - 1]}) • ${StudyBlock.formatMinutes(_now.hour * 60 + _now.minute)}:${_now.second.toString().padLeft(2, '0')}',
-                      style:
-                          TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                    ),
-                  ],
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '나만의 공부 시간표',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontWeight: FontWeight.w900, fontSize: 16.5),
+                      ),
+                      Text(
+                        '${_now.month}/${_now.day}(${_weekdayNames[_now.weekday - 1]}) ${StudyBlock.formatMinutes(_now.hour * 60 + _now.minute)} • 🔗$_pairingCode 동기화중',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.indigo.shade700),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
             actions: [
               IconButton(
-                tooltip: '기기 동시 잠금 & 비상 키 설정',
+                tooltip: 'S25 ↔ 탭 S10 즉시 동기화',
+                onPressed: () {
+                  final snap = _buildCurrentSyncSnapshotMap();
+                  FocusLockService.instance.broadcastFullDataSync(snap);
+                  FocusLockService.instance.requestFullSyncFromPeer();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                          '🔄 갤럭시 S25 ↔ 탭 S10 Ultra 전체 데이터(시간표·목표·통계)를 동기화했습니다.'),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.sync_rounded),
+              ),
+              IconButton(
+                tooltip: '연동 코드 & 비상 키 설정',
                 onPressed: _openSecurityAndSyncDialog,
                 icon: const Icon(Icons.phonelink_lock_rounded),
               ),
@@ -724,9 +942,9 @@ class _HomeScreenState extends State<HomeScreen>
                   );
                 },
                 icon: const Icon(Icons.widgets_outlined, size: 18),
-                label: const Text('위젯 보기'),
+                label: const Text('위젯'),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
             ],
           ),
           body: SafeArea(
@@ -819,15 +1037,20 @@ class _HomeScreenState extends State<HomeScreen>
                 currentBlock: currentBlock,
                 pairingCode: _pairingCode,
                 emergencyMasterKey: _emergencyMasterKey,
+                completedPomodoros: _completedPomodoroCount,
                 onOpenSecuritySettings: _openSecurityAndSyncDialog,
+                onPomodoroSessionCompleted: _handlePomodoroSessionCompleted,
                 onStartUltraFocusLock: ({
+                  required String subject,
+                  required String title,
+                  required Color color,
                   required int durationSeconds,
                   required bool syncBothDevices,
                 }) {
                   _startUltraFocusLock(
-                    subject: currentBlock?.subject ?? '집중 학습',
-                    title: currentBlock?.title ?? '뽀모도로 최대 집중 모드',
-                    color: currentBlock?.color ?? const Color(0xFFE11D48),
+                    subject: subject,
+                    title: title,
+                    color: color,
                     durationSeconds: durationSeconds,
                     syncBothDevices: syncBothDevices,
                   );
@@ -876,6 +1099,7 @@ class _HomeScreenState extends State<HomeScreen>
                     WeeklySubjectStatsView(
                       getBlocksForWeekday: _getWeeklyBlocksForWeekday,
                       weeklyGoals: _weeklyGoals,
+                      extraPomodoroMinutes: _extraPomodoroMinutes,
                       currentWeekday: _now.weekday,
                       onUpdateSubjectGoal: _updateSubjectWeeklyGoal,
                       onAssignDeficitBlockToday: _assignDeficitBlockToday,
@@ -933,15 +1157,20 @@ class _HomeScreenState extends State<HomeScreen>
                     currentBlock: currentBlock,
                     pairingCode: _pairingCode,
                     emergencyMasterKey: _emergencyMasterKey,
+                    completedPomodoros: _completedPomodoroCount,
                     onOpenSecuritySettings: _openSecurityAndSyncDialog,
+                    onPomodoroSessionCompleted: _handlePomodoroSessionCompleted,
                     onStartUltraFocusLock: ({
+                      required String subject,
+                      required String title,
+                      required Color color,
                       required int durationSeconds,
                       required bool syncBothDevices,
                     }) {
                       _startUltraFocusLock(
-                        subject: currentBlock?.subject ?? '집중 학습',
-                        title: currentBlock?.title ?? '뽀모도로 최대 집중 모드',
-                        color: currentBlock?.color ?? const Color(0xFFE11D48),
+                        subject: subject,
+                        title: title,
+                        color: color,
                         durationSeconds: durationSeconds,
                         syncBothDevices: syncBothDevices,
                       );
@@ -990,6 +1219,7 @@ class _HomeScreenState extends State<HomeScreen>
           WeeklySubjectStatsView(
             getBlocksForWeekday: _getWeeklyBlocksForWeekday,
             weeklyGoals: _weeklyGoals,
+            extraPomodoroMinutes: _extraPomodoroMinutes,
             currentWeekday: _now.weekday,
             onUpdateSubjectGoal: _updateSubjectWeeklyGoal,
             onAssignDeficitBlockToday: _assignDeficitBlockToday,
@@ -1032,7 +1262,6 @@ class _HomeScreenState extends State<HomeScreen>
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
       children: [
-        // 🚨 주간 목표 미달 과목이 있으면 오늘 계획 상단에서도 바로 알려주고 강제 배정 유도
         if (underTargetWarnings.isNotEmpty)
           Container(
             margin: const EdgeInsets.only(bottom: 12),
