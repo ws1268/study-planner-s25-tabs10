@@ -10,6 +10,9 @@ class ScheduleStorage {
   static const String _weeklyGoalsKey = 'study_planner_weekly_goals_v1';
   static const String _emergencyKeyPref = 'study_planner_emergency_key_v1';
   static const String _pairingCodePref = 'study_planner_pairing_code_v1';
+  static const String _pomoExtraMinsKey = 'study_planner_pomo_extra_mins_v1';
+  static const String _pomoCountKey = 'study_planner_pomo_count_v1';
+  static const String _lastSyncTimestampKey = 'study_planner_last_sync_ts_v1';
 
   static String formatDate(DateTime date) =>
       DateFormat('yyyy-MM-dd').format(date);
@@ -36,6 +39,7 @@ class ScheduleStorage {
     final prefs = await SharedPreferences.getInstance();
     final encoded = jsonEncode(blocks.map((b) => b.toJson()).toList());
     await prefs.setString(_blocksKey, encoded);
+    await _touchSyncTimestamp(prefs);
   }
 
   /// 과목당 1주일 목표 공부시간 로드
@@ -61,6 +65,37 @@ class ScheduleStorage {
     final prefs = await SharedPreferences.getInstance();
     final encoded = jsonEncode(goals.map((g) => g.toJson()).toList());
     await prefs.setString(_weeklyGoalsKey, encoded);
+    await _touchSyncTimestamp(prefs);
+  }
+
+  /// 뽀모도로 자유 타이머로 추가 달성한 과목별 주간 공부 시간(분) 로드/저장
+  Future<Map<String, int>> loadExtraPomodoroMinutes() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pomoExtraMinsKey);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return decoded.map((k, v) => MapEntry(k, (v as num).toInt()));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> saveExtraPomodoroMinutes(Map<String, int> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_pomoExtraMinsKey, jsonEncode(map));
+    await _touchSyncTimestamp(prefs);
+  }
+
+  Future<int> loadCompletedPomodoroCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_pomoCountKey) ?? 0;
+  }
+
+  Future<void> saveCompletedPomodoroCount(int count) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_pomoCountKey, count);
+    await _touchSyncTimestamp(prefs);
   }
 
   /// 비상 해제 마스터 키 로드/저장 (기본값: '1129')
@@ -95,6 +130,41 @@ class ScheduleStorage {
   Future<void> saveCustomOverrideDates(Set<String> dates) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_customModeDatesKey, dates.toList());
+    await _touchSyncTimestamp(prefs);
+  }
+
+  Future<int> getLastSyncTimestamp() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_lastSyncTimestampKey) ?? 0;
+  }
+
+  Future<void> _touchSyncTimestamp(SharedPreferences prefs) async {
+    await prefs.setInt(
+      _lastSyncTimestampKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  /// S25 <-> 탭 S10 Ultra 전체 데이터 동기화용 스냅샷 추출
+  Future<Map<String, dynamic>> exportFullSyncSnapshot({
+    required List<StudyBlock> blocks,
+    required List<SubjectWeeklyGoal> weeklyGoals,
+    required Set<String> customOverrideDates,
+    required Map<String, int> extraPomodoroMinutes,
+    required int completedPomodoroCount,
+  }) async {
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_lastSyncTimestampKey, ts);
+
+    return {
+      'updatedAt': ts,
+      'blocks': blocks.map((b) => b.toJson()).toList(),
+      'weeklyGoals': weeklyGoals.map((g) => g.toJson()).toList(),
+      'customOverrideDates': customOverrideDates.toList(),
+      'extraPomodoroMinutes': extraPomodoroMinutes,
+      'completedPomodoroCount': completedPomodoroCount,
+    };
   }
 
   List<SubjectWeeklyGoal> _buildInitialWeeklyGoals() {
@@ -122,7 +192,6 @@ class ScheduleStorage {
     ];
   }
 
-  /// 처음 앱을 실행했을 때 현재 시각을 기준으로 바로 체험해볼 수 있는 샘플 공부 시간표 생성
   List<StudyBlock> _buildInitialSampleBlocks() {
     final now = DateTime.now();
     final nowMinutes = now.hour * 60 + now.minute;
