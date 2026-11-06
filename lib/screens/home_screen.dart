@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 import '../models/study_block.dart';
 import '../models/subject_goal.dart';
+import '../services/app_update_service.dart';
 import '../services/focus_lock_service.dart';
 import '../services/notification_service.dart';
 import '../services/schedule_storage.dart';
@@ -37,6 +38,7 @@ class _HomeScreenState extends State<HomeScreen>
   String _emergencyMasterKey = '1129';
   String _pairingCode = 'S25-TAB10';
   int _lastAppliedSyncTimestamp = 0;
+  ReleaseInfo? _latestRelease;
 
   DateTime _now = DateTime.now();
   Timer? _ticker;
@@ -116,6 +118,15 @@ class _HomeScreenState extends State<HomeScreen>
       getLocalSnapshotCallback: _buildCurrentSyncSnapshotMap,
     );
     await _syncNotificationsAndWidget();
+    _checkForAppUpdateSilently();
+  }
+
+  Future<void> _checkForAppUpdateSilently() async {
+    final release = await AppUpdateService.instance.checkLatestRelease();
+    if (!mounted || release == null) return;
+    setState(() {
+      _latestRelease = release;
+    });
   }
 
   Map<String, dynamic> _buildCurrentSyncSnapshotMap() {
@@ -914,6 +925,31 @@ class _HomeScreenState extends State<HomeScreen>
                   );
                 },
                 icon: const Icon(Icons.sync_rounded),
+              ),
+              IconButton(
+                tooltip: '앱 안에서 바로 덮어쓰기 업데이트',
+                onPressed: _openAppUpdateDialog,
+                icon: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const Icon(Icons.system_update_rounded),
+                    if (_latestRelease != null &&
+                        _latestRelease!.isNewerThan(
+                            AppUpdateService.currentBuildNumber))
+                      Positioned(
+                        right: -2,
+                        top: -2,
+                        child: Container(
+                          width: 9,
+                          height: 9,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFEF4444),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               IconButton(
                 tooltip: '연동 코드 & 비상 키 설정',
@@ -1778,6 +1814,221 @@ class _HomeScreenState extends State<HomeScreen>
           style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
         ),
       ],
+    );
+  }
+
+  Future<void> _openAppUpdateDialog() async {
+    bool isChecking = true;
+    bool isDownloading = false;
+    double downloadProgress = 0.0;
+    int receivedBytes = 0;
+    int totalBytes = 0;
+    String? errorMsg;
+    ReleaseInfo? releaseInfo = _latestRelease;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            if (isChecking) {
+              isChecking = false;
+              AppUpdateService.instance.checkLatestRelease().then((info) {
+                if (!ctx.mounted) return;
+                setModalState(() {
+                  releaseInfo = info;
+                });
+                if (mounted && info != null) {
+                  setState(() {
+                    _latestRelease = info;
+                  });
+                }
+              });
+            }
+
+            final currentBuild = AppUpdateService.currentBuildNumber;
+            final remoteBuild = releaseInfo?.remoteBuildNumber ?? currentBuild;
+            final hasNewUpdate = remoteBuild > currentBuild;
+
+            return AlertDialog(
+              title: Row(
+                children: [
+                  Icon(Icons.system_update_alt_rounded,
+                      color: Colors.indigo.shade700),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      '앱 자체 원클릭 덮어쓰기 업데이트',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w900, fontSize: 16.5),
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: hasNewUpdate
+                            ? const Color(0xFFEEF2FF)
+                            : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: hasNewUpdate
+                              ? const Color(0xFF6366F1)
+                              : const Color(0xFFCBD5E1),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            hasNewUpdate
+                                ? '🎉 새로운 업데이트가 준비되어 있습니다!'
+                                : '✅ 현재 설치 버전: 빌드 #$currentBuild',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13.5,
+                              color: hasNewUpdate
+                                  ? Colors.indigo.shade900
+                                  : Colors.blueGrey.shade800,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            releaseInfo != null
+                                ? '서버 최신 패키지: ${releaseInfo!.title} (${releaseInfo!.sizeMbText})'
+                                : 'GitHub 최신 릴리스 정보를 확인하고 있습니다...',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF334155),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            '• 이제 PC에서 파일을 옮기거나 기존 앱을 지울 필요가 없습니다.\n'
+                            '• 아래 버튼을 누르면 앱 안에서 바로 다운로드 후 시간표·목표·통계 데이터를 100% 유지한 채 덮어쓰기 업데이트됩니다!',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              height: 1.45,
+                              color: Color(0xFF475569),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (isDownloading) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        downloadProgress >= 0
+                            ? '최신 APK 다운로드 중... ${(downloadProgress * 100).toStringAsFixed(0)}% (${(receivedBytes / (1024 * 1024)).toStringAsFixed(1)} / ${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB)'
+                            : '최신 APK 다운로드 중... (${(receivedBytes / (1024 * 1024)).toStringAsFixed(1)} MB)',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12.5,
+                          color: Colors.indigo.shade700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: downloadProgress >= 0 ? downloadProgress : null,
+                          minHeight: 10,
+                          backgroundColor: Colors.indigo.shade50,
+                          color: Colors.indigo.shade600,
+                        ),
+                      ),
+                    ],
+                    if (errorMsg != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        '⚠️ $errorMsg',
+                        style: const TextStyle(
+                          color: Color(0xFFDC2626),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isDownloading ? null : () => Navigator.pop(ctx),
+                  child: const Text('닫기'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: isDownloading
+                      ? null
+                      : () {
+                          AppUpdateService.instance.openDirectDownloadInBrowser(
+                            releaseInfo?.downloadUrl,
+                          );
+                        },
+                  icon: const Icon(Icons.open_in_browser, size: 16),
+                  label: const Text(
+                    '브라우저로 직접 받기',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: isDownloading
+                      ? null
+                      : () async {
+                          setModalState(() {
+                            isDownloading = true;
+                            errorMsg = null;
+                            downloadProgress = 0.0;
+                          });
+                          try {
+                            final url = releaseInfo?.downloadUrl ??
+                                AppUpdateService.fallbackDirectDownloadUrl;
+                            await AppUpdateService.instance
+                                .downloadAndInstallUpdate(
+                              downloadUrl: url,
+                              onProgress: (prog, recv, total) {
+                                if (!ctx.mounted) return;
+                                setModalState(() {
+                                  downloadProgress = prog;
+                                  receivedBytes = recv;
+                                  totalBytes = total;
+                                });
+                              },
+                            );
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx);
+                            }
+                          } catch (e) {
+                            if (!ctx.mounted) return;
+                            setModalState(() {
+                              isDownloading = false;
+                              errorMsg =
+                                  '다운로드 실패: $e\n우측 하단 [브라우저로 직접 받기]를 눌러 설치해 주세요.';
+                            });
+                          }
+                        },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF4F46E5),
+                  ),
+                  icon: const Icon(Icons.bolt_rounded, size: 18),
+                  label: const Text(
+                    '지금 바로 덮어쓰기 업데이트',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
