@@ -35,6 +35,8 @@ class _StudyBlockEditorSheetState extends State<StudyBlockEditorSheet> {
   late bool _notifyOnStart;
   late int _notifyBeforeEndMinutes;
   late List<ChecklistItem> _checklist;
+  late bool _autoFocusLock;
+  late bool _lockSyncBothDevices;
 
   static const List<String> _quickSubjects = [
     '수학',
@@ -89,6 +91,8 @@ class _StudyBlockEditorSheetState extends State<StudyBlockEditorSheet> {
     _notifyOnStart = b?.notifyOnStart ?? true;
     _notifyBeforeEndMinutes = b?.notifyBeforeEndMinutes ?? 5;
     _checklist = b != null ? List.of(b.checklist) : [];
+    _autoFocusLock = b?.autoFocusLock ?? false;
+    _lockSyncBothDevices = b?.lockSyncBothDevices ?? true;
   }
 
   @override
@@ -200,6 +204,8 @@ class _StudyBlockEditorSheetState extends State<StudyBlockEditorSheet> {
       notifyOnStart: _notifyOnStart,
       notifyBeforeEndMinutes: _notifyBeforeEndMinutes,
       checklist: _checklist,
+      autoFocusLock: _autoFocusLock,
+      lockSyncBothDevices: _lockSyncBothDevices,
     );
 
     Navigator.of(context).pop(result);
@@ -554,9 +560,90 @@ class _StudyBlockEditorSheetState extends State<StudyBlockEditorSheet> {
                     }),
                     const SizedBox(height: 20),
 
-                    // 5. 알림 설정
+                    // 5. 스케줄별 강제집중 기능 (다른 앱 차단)
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: _autoFocusLock
+                            ? const Color(0xFFFEF2F2)
+                            : const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: _autoFocusLock
+                              ? const Color(0xFFEF4444)
+                              : Colors.grey.shade300,
+                          width: _autoFocusLock ? 1.5 : 1,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                _autoFocusLock
+                                    ? Icons.lock_clock_rounded
+                                    : Icons.lock_open_rounded,
+                                color: _autoFocusLock
+                                    ? const Color(0xFFDC2626)
+                                    : Colors.blueGrey,
+                              ),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  '5. 이 스케줄에 강제집중(앱 차단) 활성화',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                              Switch(
+                                value: _autoFocusLock,
+                                activeColor: const Color(0xFFDC2626),
+                                onChanged: (v) =>
+                                    setState(() => _autoFocusLock = v),
+                              ),
+                            ],
+                          ),
+                          const Text(
+                            '켜두면 이 공부 시간대가 시작될 때 자동으로 최대 집중 잠금이 켜져 다른 앱 사용을 막아줍니다. (비상 키로 언제든 해제 가능)',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF475569),
+                              height: 1.4,
+                            ),
+                          ),
+                          if (_autoFocusLock) ...[
+                            const Divider(height: 16),
+                            SwitchListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text(
+                                '갤럭시 S25 + 탭 S10 Ultra 동시 강제잠금 연동',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                              subtitle: const Text(
+                                '이 스케줄이 시작되면 폰과 태블릿 두 기기 모두 다른 앱을 쓰지 못하게 잠급니다.',
+                                style: TextStyle(fontSize: 11.5),
+                              ),
+                              value: _lockSyncBothDevices,
+                              activeColor: const Color(0xFFDC2626),
+                              onChanged: (v) =>
+                                  setState(() => _lockSyncBothDevices = v),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // 6. 알림 설정
                     const Text(
-                      '5. 알림 설정 (사운드 + 팝업 토스트)',
+                      '6. 알림 설정 (사운드 + 팝업 토스트)',
                       style:
                           TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                     ),
