@@ -41,6 +41,8 @@ class ChecklistItem {
 /// 분 단위 자유 시간대 지정이 가능한 학습 블록 모델
 /// - [weekdays]: 1(월) ~ 7(일) 반복 요일 목록 (요일별 기본 시간표용)
 /// - [specificDate]: 'yyyy-MM-dd' 형식의 특정 날짜 (오늘만의 일일 계획용, null이면 요일 반복)
+/// - [autoFocusLock]: 이 스케줄 시작 시간에 자동으로 강제집중(다른 앱 차단)을 실행할지 여부
+/// - [lockSyncBothDevices]: 강제집중 시 S25와 탭 S10 Ultra 두 기기를 동시에 잠글지 여부
 class StudyBlock {
   final String id;
   final String subject; // 과목명 (예: 수학, 영어, 탐구, 코딩)
@@ -54,6 +56,8 @@ class StudyBlock {
   final bool notifyOnStart; // 시작 정각 알림 여부
   final int notifyBeforeEndMinutes; // 종료 N분 전 알림 (0이면 끔, 예: 5, 10)
   final List<ChecklistItem> checklist; // 세부 할 일 체크리스트
+  final bool autoFocusLock; // 스케줄별 강제집중 모드 활성화 여부
+  final bool lockSyncBothDevices; // 강제집중 시 폰+태블릿 동시 잠금 여부
 
   const StudyBlock({
     required this.id,
@@ -68,6 +72,8 @@ class StudyBlock {
     this.notifyOnStart = true,
     this.notifyBeforeEndMinutes = 5,
     this.checklist = const [],
+    this.autoFocusLock = false,
+    this.lockSyncBothDevices = true,
   });
 
   Color get color => Color(colorValue);
@@ -138,6 +144,8 @@ class StudyBlock {
     bool? notifyOnStart,
     int? notifyBeforeEndMinutes,
     List<ChecklistItem>? checklist,
+    bool? autoFocusLock,
+    bool? lockSyncBothDevices,
   }) {
     return StudyBlock(
       id: id ?? this.id,
@@ -154,6 +162,8 @@ class StudyBlock {
       notifyBeforeEndMinutes:
           notifyBeforeEndMinutes ?? this.notifyBeforeEndMinutes,
       checklist: checklist ?? this.checklist,
+      autoFocusLock: autoFocusLock ?? this.autoFocusLock,
+      lockSyncBothDevices: lockSyncBothDevices ?? this.lockSyncBothDevices,
     );
   }
 
@@ -170,6 +180,8 @@ class StudyBlock {
         'notifyOnStart': notifyOnStart,
         'notifyBeforeEndMinutes': notifyBeforeEndMinutes,
         'checklist': checklist.map((e) => e.toJson()).toList(),
+        'autoFocusLock': autoFocusLock,
+        'lockSyncBothDevices': lockSyncBothDevices,
       };
 
   factory StudyBlock.fromJson(Map<String, dynamic> json) {
@@ -190,6 +202,8 @@ class StudyBlock {
       checklist: (json['checklist'] as List<dynamic>? ?? [])
           .map((e) => ChecklistItem.fromJson(e as Map<String, dynamic>))
           .toList(),
+      autoFocusLock: json['autoFocusLock'] as bool? ?? false,
+      lockSyncBothDevices: json['lockSyncBothDevices'] as bool? ?? true,
     );
   }
 }
