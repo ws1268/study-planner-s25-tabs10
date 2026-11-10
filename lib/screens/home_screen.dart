@@ -11,6 +11,7 @@ import '../services/notification_service.dart';
 import '../services/schedule_storage.dart';
 import '../services/widget_service.dart';
 import '../widgets/active_study_hero_card.dart';
+import '../widgets/handwritten_planner_scanner_sheet.dart';
 import '../widgets/pomodoro_timer_card.dart';
 import '../widgets/study_block_editor_sheet.dart';
 import '../widgets/ultra_focus_lock_overlay.dart';
@@ -58,6 +59,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   String? _lastAlertKey;
   int _lastWidgetSyncMinute = -1;
+  final Set<String> _autoLockedBlockKeys = {};
 
   static const List<String> _weekdayNames = ['월', '화', '수', '목', '금', '토', '일'];
 
@@ -525,6 +527,24 @@ class _HomeScreenState extends State<HomeScreen>
             );
           }
         }
+        // 🔒 스케줄별 강제집중(autoFocusLock)이 켜져 있으면 시작 정각에 자동으로 강제집중 잠금 실행!
+        if (block.autoFocusLock &&
+            block.startMinutes == nowMins &&
+            !_isUltraFocusLocked) {
+          final lockKey =
+              'autolock_${ScheduleStorage.formatDate(now)}_${block.id}_$nowMins';
+          if (!_autoLockedBlockKeys.contains(lockKey)) {
+            _autoLockedBlockKeys.add(lockKey);
+            final durSecs = block.remainingSecondsAt(now).clamp(60, 86400);
+            _startUltraFocusLock(
+              subject: block.subject,
+              title: '[스케줄 자동 강제집중] ${block.title}',
+              color: block.color,
+              durationSeconds: durSecs,
+              syncBothDevices: block.lockSyncBothDevices,
+            );
+          }
+        }
         if (block.notifyBeforeEndMinutes > 0 &&
             block.endMinutes - block.notifyBeforeEndMinutes == nowMins) {
           final key = 'warn_${block.id}_$nowMins';
@@ -813,6 +833,65 @@ class _HomeScreenState extends State<HomeScreen>
     await _persistAndBroadcastAllChanges();
   }
 
+  /// 🔒 스케줄 카드에서 원터치로 해당 스케줄의 강제집중(autoFocusLock) ON/OFF 토글
+  Future<void> _toggleBlockAutoFocusLock(StudyBlock block) async {
+    final updatedBlock = block.copyWith(autoFocusLock: !block.autoFocusLock);
+    setState(() {
+      final idx = _allBlocks.indexWhere((b) => b.id == block.id);
+      if (idx >= 0) {
+        _allBlocks[idx] = updatedBlock;
+      }
+    });
+    await _persistAndBroadcastAllChanges();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          updatedBlock.autoFocusLock
+              ? '🔒 [${updatedBlock.subject}] (${updatedBlock.formattedTimeRange}) 시작 시 자동 강제집중 잠금이 켜졌습니다!'
+              : '🔓 [${updatedBlock.subject}] 스케줄 자동 강제집중이 해제되었습니다.',
+        ),
+      ),
+    );
+  }
+
+  /// 📷 손으로 적은 플래너 시간표 사진 촬영/스캔 → 오늘의 스케줄표에 일괄 등록
+  Future<void> _openHandwrittenPlannerScanner() async {
+    final targetDateStr = ScheduleStorage.formatDate(_selectedDate);
+    final result = await showModalBottomSheet<
+        ({List<StudyBlock> blocks, bool replaceExistingTodayPlan})>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      constraints: const BoxConstraints(maxWidth: 720),
+      backgroundColor: Colors.transparent,
+      builder: (_) => HandwrittenPlannerScannerSheet(
+        targetDateStr: targetDateStr,
+      ),
+    );
+
+    if (result == null || result.blocks.isEmpty) return;
+
+    setState(() {
+      if (result.replaceExistingTodayPlan) {
+        _allBlocks.removeWhere((b) => b.specificDate == targetDateStr);
+        _customOverrideDates.add(targetDateStr);
+      }
+      _allBlocks.addAll(result.blocks);
+      _tabController.animateTo(0);
+    });
+
+    await _persistAndBroadcastAllChanges();
+
+    if (!mounted) return;
+    _showInAppAlertToast(
+      title: '📷 손글씨 플래너 ${result.blocks.length}개 블록 스캔 등록 완료!',
+      message: '오늘의 스케줄표에 반영되었으며 S25 ↔ 탭 S10 Ultra 및 홈 위젯에 즉시 동기화되었습니다.',
+      color: const Color(0xFF4F46E5),
+    );
+  }
+
   Future<void> _copyWeeklyToDailyCustomPlan(DateTime date) async {
     final dateStr = ScheduleStorage.formatDate(date);
     final weekday = date.weekday;
@@ -911,6 +990,14 @@ class _HomeScreenState extends State<HomeScreen>
               ],
             ),
             actions: [
+              IconButton(
+                tooltip: '손글씨 플래너 찍어서 스캔',
+                onPressed: _openHandwrittenPlannerScanner,
+                icon: const Icon(
+                  Icons.document_scanner_rounded,
+                  color: Color(0xFF4F46E5),
+                ),
+              ),
               IconButton(
                 tooltip: 'S25 ↔ 탭 S10 즉시 동기화',
                 onPressed: () {
@@ -1438,6 +1525,25 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                 ],
               ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _openHandwrittenPlannerScanner,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF4F46E5),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.document_scanner_rounded, size: 18),
+                  label: const Text(
+                    '📷 손으로 적은 플래너 찍어서 오늘의 스케줄표에 바로 넣기',
+                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -1773,6 +1879,87 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ],
+            const SizedBox(height: 10),
+            // 🔒 스케줄표별 강제집중 원터치 활성화 바 & 즉시 잠금 시작 버튼
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: block.autoFocusLock
+                    ? const Color(0xFFFEF2F2)
+                    : const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: block.autoFocusLock
+                      ? const Color(0xFFFCA5A5)
+                      : Colors.grey.shade200,
+                ),
+              ),
+              child: Row(
+                children: [
+                  InkWell(
+                    onTap: () => _toggleBlockAutoFocusLock(block),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          block.autoFocusLock
+                              ? Icons.lock_clock_rounded
+                              : Icons.lock_open_rounded,
+                          size: 17,
+                          color: block.autoFocusLock
+                              ? const Color(0xFFDC2626)
+                              : Colors.blueGrey.shade600,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          block.autoFocusLock
+                              ? '스케줄 강제집중 ON (시작 시 자동 잠금)'
+                              : '스케줄 강제집중 OFF (눌러서 켜기)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: block.autoFocusLock
+                                ? const Color(0xFFDC2626)
+                                : Colors.blueGrey.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Spacer(),
+                  FilledButton.tonalIcon(
+                    onPressed: () {
+                      final durSecs = isActive
+                          ? block.remainingSecondsAt(_now).clamp(60, 86400)
+                          : (block.durationMinutes * 60).clamp(60, 86400);
+                      _startUltraFocusLock(
+                        subject: block.subject,
+                        title: block.title,
+                        color: block.color,
+                        durationSeconds: durSecs,
+                        syncBothDevices: block.lockSyncBothDevices,
+                      );
+                    },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFFEE2E2),
+                      foregroundColor: const Color(0xFFB91C1C),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                    ),
+                    icon: const Icon(Icons.bolt_rounded, size: 15),
+                    label: Text(
+                      isActive ? '남은 시간 강제집중' : '지금 강제집중 시작',
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
